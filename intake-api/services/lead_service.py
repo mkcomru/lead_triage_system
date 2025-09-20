@@ -21,18 +21,30 @@ class LeadService:
     async def create_lead(self, lead_request: LeadRequest, idempotency_key: str) -> Lead:
         """Создает лид с проверкой идемпотентности"""
         
+        print(f"Processing request with idempotency key: {idempotency_key}")
+        
         existing_key = self.db.query(IdempotencyKeyDB).filter(
             IdempotencyKeyDB.key == idempotency_key
         ).first()
         
         if existing_key:
-            stored_request = json.loads(existing_key.response_data)
-            current_request = lead_request.model_dump()
-            
-            if stored_request["request"] == current_request:
-                return Lead(**stored_request["lead"])
-            else:
-                raise HTTPException(status_code=409, detail="Idempotency key conflict")
+            print(f"Found existing idempotency key: {idempotency_key}")
+            try:
+                stored_data = json.loads(existing_key.response_data)
+                stored_request = stored_data["request"]
+                current_request = lead_request.model_dump()
+                
+                if stored_request == current_request:
+                    print("Request matches - returning cached response")
+                    return Lead(**stored_data["lead"])
+                else:
+                    print("Request differs - conflict!")
+                    raise HTTPException(status_code=409, detail="Idempotency key conflict")
+            except (json.JSONDecodeError, KeyError) as e:
+                print(f"Error parsing stored data: {e}")
+                raise HTTPException(status_code=500, detail="Invalid stored idempotency data")
+        
+        print("Creating new lead...")
         
         lead_id = str(uuid.uuid4())
         lead_db = LeadDB(
@@ -47,7 +59,7 @@ class LeadService:
         
         try:
             self.db.add(lead_db)
-            self.db.flush()
+            self.db.flush()  
             
             lead_response = Lead.model_validate(lead_db)
             
@@ -73,12 +85,20 @@ class LeadService:
             )
             
             await queue.publish_event(event)
+            print(f"Published event for lead {lead_id}")
+            
             self.db.commit()
+            print(f"Successfully created lead {lead_id}")
             
             return lead_response
             
+        except IntegrityError as e:
+            self.db.rollback()
+            print(f"Integrity error: {e}")
+            raise HTTPException(status_code=400, detail="Failed to create lead")
         except Exception as e:
             self.db.rollback()
+            print(f"Unexpected error: {e}")
             raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
     async def get_lead(self, lead_id: str) -> Lead:
