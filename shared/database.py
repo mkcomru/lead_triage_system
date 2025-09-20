@@ -4,8 +4,9 @@ from sqlalchemy.orm import sessionmaker, mapped_column, Mapped, relationship
 from typing import Optional, List
 import uuid
 from datetime import datetime
+from config import config
 
-DATABASE_URL = "sqlite:///./database.sqlite"
+DATABASE_URL = config.DATABASE_URL
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
