@@ -7,7 +7,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))
 
 from shared.database import get_db
 from shared.models import LeadRequest, Lead
-from ..services.lead_service import LeadService
+from services.lead_service import LeadService
 
 router = APIRouter(prefix="/leads", tags=["leads"])
 
