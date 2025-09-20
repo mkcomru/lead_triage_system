@@ -1,0 +1,42 @@
+# Виртуальные окружения
+venv/
+.env/
+.venv/
+
+# Кэш и компиляция
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Файлы сборки и метаданные пакетов
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Кэш тестов и отчетов
+.coverage
+.pytest_cache/
+.cache/
+
+# Файлы и папки IDE/editor'а
+.vscode/
+.idea/
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+
+# Логи и временные файлы
+*.log
+*.tmp
+
+# Личные настройки среды
+.env
+*.env
+
+# База SQLite (если используется для тестов)
+*.sqlite3
+
+# Системные файлы
+.DS_Store
+Thumbs.db
