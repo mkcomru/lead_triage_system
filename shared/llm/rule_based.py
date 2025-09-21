@@ -7,19 +7,14 @@ class RuleBasedLLM(LLMAdapter):
     async def triage(self, note: str, context: Optional[Dict] = None) -> InsightPayload:
         note_lower = note.lower()
         
-        # Определяем intent
         intent = self._detect_intent(note_lower)
         
-        # Определяем priority
         priority = self._detect_priority(note_lower, intent)
         
-        # Определяем next_action
         next_action = self._detect_next_action(intent, priority)
         
-        # Определяем confidence (базовая логика)
         confidence = self._calculate_confidence(note_lower, intent)
         
-        # Извлекаем теги
         tags = self._extract_tags(note_lower)
         
         return InsightPayload(
@@ -31,7 +26,6 @@ class RuleBasedLLM(LLMAdapter):
         )
     
     def _detect_intent(self, note: str) -> str:
-        # Паттерны для определения намерений
         buy_patterns = [
             r'\b(price|pricing|стоимость|купить|счёт|invoice|purchase|buy|order)\b',
             r'\b(trial|discount|скидка|пробная|демо)\b'
@@ -102,10 +96,8 @@ class RuleBasedLLM(LLMAdapter):
             return "qualify"
     
     def _calculate_confidence(self, note: str, intent: str) -> float:
-        # Простая логика расчета уверенности
         base_confidence = 0.7
         
-        # Увеличиваем уверенность для четких паттернов
         clear_patterns = {
             "buy": [r'\b(price|pricing|купить|invoice)\b'],
             "support": [r'\b(support|не работает|bug)\b'],
@@ -124,17 +116,14 @@ class RuleBasedLLM(LLMAdapter):
     def _extract_tags(self, note: str) -> list:
         tags = []
         
-        # Определяем размер компании
         if re.search(r'\b(\d+)\s*(seat|license|user|пользователь)', note):
             tags.append("enterprise")
         elif re.search(r'\b(small|startup|начинающ)', note):
             tags.append("small_business")
         
-        # Определяем источник urgency
         if re.search(r'\b(urgent|срочно|asap)', note):
             tags.append("urgent")
         
-        # Определяем технические термины
         if re.search(r'\b(api|integration|техническ)', note):
             tags.append("technical")
         

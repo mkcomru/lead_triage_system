@@ -15,7 +15,6 @@ class RedisQueue:
     async def publish_event(self, event: QueueEvent) -> str:
         """Публикует событие в Redis Stream"""
         event_data = event.model_dump()
-        # Конвертируем datetime в ISO string для Redis
         event_data["occurred_at"] = event_data["occurred_at"].isoformat()
         
         message_id = self.redis.xadd(
@@ -47,7 +46,6 @@ class RedisQueue:
             events = []
             for stream, msgs in messages:
                 for msg_id, fields in msgs:
-                    # Конвертируем ISO string обратно в datetime
                     if "occurred_at" in fields:
                         fields["occurred_at"] = datetime.fromisoformat(fields["occurred_at"])
                     
@@ -63,5 +61,4 @@ class RedisQueue:
         """Подтверждает обработку сообщения"""
         self.redis.xack(self.stream_name, self.consumer_group, message_id)
 
-# Singleton instance
 queue = RedisQueue()

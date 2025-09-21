@@ -1,4 +1,3 @@
-# shared/models.py
 from pydantic import BaseModel, Field
 from typing import Optional, List, Literal
 from datetime import datetime
@@ -23,7 +22,7 @@ class Lead(BaseModel):
     created_at: datetime
 
     class Config:
-        from_attributes = True  # Для конвертации из SQLAlchemy объектов
+        from_attributes = True  
 
 class InsightPayload(BaseModel):
     """Результат работы LLM адаптера"""

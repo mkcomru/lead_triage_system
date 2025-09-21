@@ -1,10 +1,10 @@
 from sqlalchemy import create_engine, String, Float, DateTime, Text, UniqueConstraint, ForeignKey
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, mapped_column, Mapped, relationship
+from sqlalchemy.orm import sessionmaker, mapped_column, Mapped, relationship, declarative_base
 from typing import Optional, List
 import uuid
 from datetime import datetime
 from .config import config
+from datetime import datetime, timezone
 
 DATABASE_URL = config.DATABASE_URL
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
@@ -23,7 +23,7 @@ class LeadDB(Base):
     name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     note: Mapped[str] = mapped_column(Text, nullable=False)
     source: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     
     insights: Mapped[List["InsightDB"]] = relationship("InsightDB", back_populates="lead")
 
@@ -38,7 +38,7 @@ class InsightDB(Base):
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
     tags: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     content_hash: Mapped[str] = mapped_column(String, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     
     lead: Mapped["LeadDB"] = relationship("LeadDB", back_populates="insights")
     
@@ -51,7 +51,7 @@ class IdempotencyKeyDB(Base):
     
     key: Mapped[str] = mapped_column(String, primary_key=True)
     response_data: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 def get_db():
     db = SessionLocal()
