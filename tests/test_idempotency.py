@@ -422,6 +422,497 @@ class TestIdempotencyDetailed:
         
         print(f"🎉 EDGE CASES TEST PASSED!")
 
+    def test_idempotency_conflict_detailed(self, intake_client, db_connection):
+        """
+        ТЕСТ 3: Детальная проверка конфликта идемпотентности
+        
+        Повтор POST /leads с тем же Idempotency-Key но ДРУГИМ телом должен:
+        1. Вернуть ошибку 409 (Conflict) или 422 (Unprocessable Entity)
+        2. НЕ создать новый лид в БД
+        3. НЕ изменить существующий лид
+        4. Вернуть информативное сообщение об ошибке
+        """
+        print("\n⚠️  DETAILED TEST: Idempotency Conflict - Different Body")
+        
+        endpoint = self._find_post_endpoint(intake_client)
+        if not endpoint:
+            pytest.skip("No working POST endpoint found")
+        
+        print(f"✅ Using endpoint: {endpoint}")
+        
+        idempotency_key = f"conflict-test-{int(time.time())}"
+        
+        lead_data_1 = {
+            "email": "conflict-original@example.com",
+            "phone": "+1111111111",
+            "name": "Original User",
+            "note": "This is the original request content",
+            "source": "conflict_test"
+        }
+        
+        lead_data_2 = {
+            "email": "conflict-different@example.com",  
+            "phone": "+2222222222",                    
+            "name": "Different User",                  
+            "note": "This is completely different content", 
+            "source": "conflict_test"                  
+        }
+        
+        print(f"\n📝 STEP 1: Making first request...")
+        print(f"   📋 Idempotency-Key: {idempotency_key}")
+        print(f"   📋 First email: {lead_data_1['email']}")
+        print(f"   📋 First name: {lead_data_1['name']}")
+        
+        cursor = db_connection.cursor()
+        
+        cursor.execute("SELECT COUNT(*) FROM leads WHERE source = ?", (lead_data_1['source'],))
+        leads_before = cursor.fetchone()[0]
+        
+        print(f"   📊 Leads with source '{lead_data_1['source']}' before: {leads_before}")
+        
+        start_time_1 = time.time()
+        response1 = intake_client.post(
+            endpoint,
+            json=lead_data_1,
+            headers={"Idempotency-Key": idempotency_key}
+        )
+        end_time_1 = time.time()
+        
+        print(f"   📋 First response: {response1.status_code} (took {end_time_1 - start_time_1:.3f}s)")
+        
+        assert response1.status_code in [200, 201], f"First request failed: {response1.status_code}"
+        
+        lead1_data = response1.json()
+        lead1_id = lead1_data["id"]
+        
+        print(f"   ✅ First lead created: {lead1_id}")
+        print(f"   📋 First response data: {json.dumps(lead1_data, indent=2)}")
+        
+        cursor.execute("SELECT COUNT(*) FROM leads WHERE source = ?", (lead_data_1['source'],))
+        leads_after_first = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT * FROM leads WHERE id = ?", (lead1_id,))
+        db_lead_original = cursor.fetchone()
+        
+        print(f"   📊 Leads after first request: {leads_after_first}")
+        print(f"   📊 Original lead in DB: {db_lead_original}")
+        
+        assert leads_after_first == leads_before + 1, "Should create exactly one lead"
+        assert db_lead_original is not None, "Lead should exist in database"
+        
+        time.sleep(0.1)
+        
+        print(f"\n⚠️  STEP 2: Making conflicting second request...")
+        print(f"   📋 Same Idempotency-Key: {idempotency_key}")
+        print(f"   📋 Different email: {lead_data_2['email']}")
+        print(f"   📋 Different name: {lead_data_2['name']}")
+        print(f"   📋 Different content: This should cause conflict!")
+        
+        start_time_2 = time.time()
+        response2 = intake_client.post(
+            endpoint,
+            json=lead_data_2,  
+            headers={"Idempotency-Key": idempotency_key}  
+        )
+        end_time_2 = time.time()
+        
+        print(f"   📋 Second response: {response2.status_code} (took {end_time_2 - start_time_2:.3f}s)")
+        print(f"   📋 Second response body: {response2.text}")
+        
+        print(f"\n🔍 STEP 3: Verifying conflict detection...")
+        
+        assert response2.status_code in [409, 422], f"Expected 409/422 for conflict, got {response2.status_code}"
+        
+        print(f"   ✅ Correct error status: {response2.status_code}")
+        
+        try:
+            error_data = response2.json()
+            print(f"   📋 Error response: {json.dumps(error_data, indent=2)}")
+            
+            error_text = str(error_data).lower()
+            conflict_keywords = ["conflict", "idempotency", "duplicate", "mismatch", "different"]
+            
+            found_keywords = [kw for kw in conflict_keywords if kw in error_text]
+            
+            assert len(found_keywords) > 0, f"Error should mention conflict. Found keywords: {found_keywords}"
+            
+            print(f"   ✅ Error message is informative (contains: {found_keywords})")
+            
+            if isinstance(error_data, dict):
+                if "detail" in error_data:
+                    print(f"   📋 Error detail: {error_data['detail']}")
+                if "error" in error_data:
+                    print(f"   📋 Error message: {error_data['error']}")
+            
+        except json.JSONDecodeError:
+            print(f"   📋 Non-JSON error response: {response2.text}")
+            error_text = response2.text.lower()
+            assert any(kw in error_text for kw in ["conflict", "idempotency", "duplicate"]), "Error text should mention conflict"
+        
+        print(f"\n🗄️  STEP 4: Verifying no database changes...")
+        
+        cursor.execute("SELECT COUNT(*) FROM leads WHERE source = ?", (lead_data_1['source'],))
+        leads_after_second = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT * FROM leads WHERE id = ?", (lead1_id,))
+        db_lead_after_conflict = cursor.fetchone()
+        
+        cursor.execute("SELECT COUNT(*) FROM leads WHERE email = ?", (lead_data_2['email'],))
+        conflicting_leads = cursor.fetchone()[0]
+        
+        print(f"   📊 Leads after second request: {leads_after_second}")
+        print(f"   📊 Original lead after conflict: {db_lead_after_conflict}")
+        print(f"   📊 Leads with conflicting email: {conflicting_leads}")
+        
+        assert leads_after_second == leads_after_first, f"No new leads should be created: {leads_after_second} vs {leads_after_first}"
+        assert db_lead_original == db_lead_after_conflict, "Original lead should not be modified"
+        assert conflicting_leads == 0, f"No leads with conflicting email should exist: {conflicting_leads}"
+        
+        print(f"   ✅ No database changes detected")
+        print(f"   ✅ Original lead preserved")
+        print(f"   ✅ No conflicting data created")
+        
+        print(f"\n🔄 STEP 5: Verifying original request still works...")
+        
+        response3 = intake_client.post(
+            endpoint,
+            json=lead_data_1,  
+            headers={"Idempotency-Key": idempotency_key}  
+        )
+        
+        print(f"   📋 Third response (original data): {response3.status_code}")
+        
+        assert response3.status_code == 200, f"Original request should still work: {response3.status_code}"
+        
+        lead3_data = response3.json()
+        
+        assert lead3_data == lead1_data, "Third response should be identical to first"
+        
+        print(f"   ✅ Original idempotent request still works")
+        print(f"   📋 Third response ID: {lead3_data['id']} (same as first)")
+        
+        print(f"\n📊 STEP 6: Response time analysis...")
+        
+        response_time_1 = end_time_1 - start_time_1
+        response_time_2 = end_time_2 - start_time_2
+        
+        print(f"   📊 First request (success): {response_time_1:.3f}s")
+        print(f"   📊 Second request (conflict): {response_time_2:.3f}s")
+        
+        if response_time_2 < response_time_1:
+            print(f"   ✅ Conflict detected quickly")
+        else:
+            print(f"   ℹ️  Similar response times")
+        
+        print(f"\n🎉 IDEMPOTENCY CONFLICT TEST PASSED!")
+        print(f"   ✅ Conflict correctly detected ({response2.status_code})")
+        print(f"   ✅ Informative error message")
+        print(f"   ✅ No database corruption")
+        print(f"   ✅ Original request still works")
+        
+        return {
+            "original_lead_id": lead1_id,
+            "conflict_status": response2.status_code,
+            "error_response": response2.json() if response2.status_code != 500 else response2.text,
+            "response_times": {
+                "original": response_time_1,
+                "conflict": response_time_2
+            }
+        }
+
+    def test_idempotency_various_conflicts(self, intake_client, db_connection):
+        """
+        Тест различных типов конфликтов идемпотентности
+        """
+        print("\n🎯 TEST: Various Idempotency Conflicts")
+        
+        endpoint = self._find_post_endpoint(intake_client)
+        if not endpoint:
+            pytest.skip("No working POST endpoint found")
+        
+        cursor = db_connection.cursor()
+        
+        print("\n   🔍 Conflict 1: Email change only")
+        
+        key1 = f"email-conflict-{int(time.time())}"
+        
+        original_data = {
+            "email": "original@example.com",
+            "name": "Same User",
+            "note": "Same note content",
+            "source": "various_conflicts_test"
+        }
+        
+        modified_email_data = {
+            "email": "modified@example.com",  
+            "name": "Same User",
+            "note": "Same note content",
+            "source": "various_conflicts_test"
+        }
+        
+        response1 = intake_client.post(
+            endpoint,
+            json=original_data,
+            headers={"Idempotency-Key": key1}
+        )
+        
+        assert response1.status_code in [200, 201], "First request should succeed"
+        
+        response2 = intake_client.post(
+            endpoint,
+            json=modified_email_data,
+            headers={"Idempotency-Key": key1}
+        )
+        
+        assert response2.status_code in [409, 422], f"Email conflict should fail: {response2.status_code}"
+        print(f"      ✅ Email conflict detected: {response2.status_code}")
+        
+        print("\n   🔍 Conflict 2: Note change only")
+        
+        key2 = f"note-conflict-{int(time.time())}"
+        
+        original_note_data = {
+            "email": "note-test@example.com",
+            "name": "Note User",
+            "note": "Original note content",
+            "source": "various_conflicts_test"
+        }
+        
+        modified_note_data = {
+            "email": "note-test@example.com",
+            "name": "Note User",
+            "note": "Modified note content",
+            "source": "various_conflicts_test"
+        }
+        
+        response1 = intake_client.post(
+            endpoint,
+            json=original_note_data,
+            headers={"Idempotency-Key": key2}
+        )
+        
+        assert response1.status_code in [200, 201], "First note request should succeed"
+        
+        response2 = intake_client.post(
+            endpoint,
+            json=modified_note_data,
+            headers={"Idempotency-Key": key2}
+        )
+        
+        assert response2.status_code in [409, 422], f"Note conflict should fail: {response2.status_code}"
+        print(f"      ✅ Note conflict detected: {response2.status_code}")
+        
+        print("\n   🔍 Conflict 3: Field addition")
+        
+        key3 = f"field-addition-{int(time.time())}"
+        
+        minimal_data = {
+            "email": "minimal@example.com",
+            "note": "Minimal data",
+            "source": "various_conflicts_test"
+        }
+        
+        extended_data = {
+            "email": "minimal@example.com",
+            "phone": "+1234567890",  
+            "name": "Added Name",    
+            "note": "Minimal data",
+            "source": "various_conflicts_test"
+        }
+        
+        response1 = intake_client.post(
+            endpoint,
+            json=minimal_data,
+            headers={"Idempotency-Key": key3}
+        )
+        
+        assert response1.status_code in [200, 201], "Minimal request should succeed"
+        
+        response2 = intake_client.post(
+            endpoint,
+            json=extended_data,
+            headers={"Idempotency-Key": key3}
+        )
+        
+        assert response2.status_code in [409, 422], f"Field addition conflict should fail: {response2.status_code}"
+        print(f"      ✅ Field addition conflict detected: {response2.status_code}")
+        
+        print("\n   🔍 Conflict 4: Field removal")
+        
+        key4 = f"field-removal-{int(time.time())}"
+        
+        full_data = {
+            "email": "full@example.com",
+            "phone": "+1234567890",
+            "name": "Full User",
+            "note": "Full data",
+            "source": "various_conflicts_test"
+        }
+        
+        reduced_data = {
+            "email": "full@example.com",
+            "note": "Full data",
+            "source": "various_conflicts_test"
+        }
+        
+        response1 = intake_client.post(
+            endpoint,
+            json=full_data,
+            headers={"Idempotency-Key": key4}
+        )
+        
+        assert response1.status_code in [200, 201], "Full request should succeed"
+        
+        response2 = intake_client.post(
+            endpoint,
+            json=reduced_data,
+            headers={"Idempotency-Key": key4}
+        )
+        
+        assert response2.status_code in [409, 422], f"Field removal conflict should fail: {response2.status_code}"
+        print(f"      ✅ Field removal conflict detected: {response2.status_code}")
+        
+        cursor.execute("SELECT COUNT(*) FROM leads WHERE source = ?", ("various_conflicts_test",))
+        total_leads = cursor.fetchone()[0]
+        
+        assert total_leads == 4, f"Should have 4 leads from first requests, got {total_leads}"
+        
+        print(f"\n   📊 Database verification: {total_leads} leads created (correct)")
+        print(f"🎉 VARIOUS CONFLICTS TEST PASSED!")
+
+    def test_idempotency_conflict_edge_cases(self, intake_client):
+        """
+        Граничные случаи конфликтов идемпотентности
+        """
+        print("\n🎯 TEST: Idempotency Conflict Edge Cases")
+        
+        endpoint = self._find_post_endpoint(intake_client)
+        if not endpoint:
+            pytest.skip("No working POST endpoint found")
+        
+        print("\n   🔍 Edge Case 1: Very similar data")
+        
+        key1 = f"similar-{int(time.time())}"
+        
+        data1 = {
+            "email": "similar@example.com",
+            "note": "This is a test message",
+            "source": "edge_conflict_test"
+        }
+        
+        data2 = {
+            "email": "similar@example.com",
+            "note": "This is a test message.", 
+            "source": "edge_conflict_test"
+        }
+        
+        response1 = intake_client.post(endpoint, json=data1, headers={"Idempotency-Key": key1})
+        response2 = intake_client.post(endpoint, json=data2, headers={"Idempotency-Key": key1})
+        
+        assert response1.status_code in [200, 201], "First similar request should succeed"
+        assert response2.status_code in [409, 422], "Minor difference should cause conflict"
+        
+        print(f"      ✅ Minor text difference detected")
+        
+        print("\n   🔍 Edge Case 2: Different field order")
+        
+        key2 = f"order-{int(time.time())}"
+        
+        data_order1 = {
+            "email": "order@example.com",
+            "name": "Order User",
+            "note": "Field order test",
+            "source": "edge_conflict_test"
+        }
+        
+        data_order2 = {
+            "note": "Field order test",
+            "source": "edge_conflict_test",
+            "email": "order@example.com",
+            "name": "Order User"
+        }
+        
+        response1 = intake_client.post(endpoint, json=data_order1, headers={"Idempotency-Key": key2})
+        response2 = intake_client.post(endpoint, json=data_order2, headers={"Idempotency-Key": key2})
+        
+        assert response1.status_code in [200, 201], "First order request should succeed"
+        assert response2.status_code == 200, "Same content in different order should be idempotent"
+        
+        print(f"      ✅ Field order doesn't matter for idempotency")
+        
+        print("\n   🔍 Edge Case 3: Null vs missing fields")
+        
+        key3 = f"null-{int(time.time())}"
+        
+        data_missing = {
+            "email": "null-test@example.com",
+            "note": "Null test",
+            "source": "edge_conflict_test"
+        }
+        
+        data_null = {
+            "email": "null-test@example.com",
+            "phone": None,  
+            "note": "Null test",
+            "source": "edge_conflict_test"
+        }
+        
+        response1 = intake_client.post(endpoint, json=data_missing, headers={"Idempotency-Key": key3})
+        response2 = intake_client.post(endpoint, json=data_null, headers={"Idempotency-Key": key3})
+        
+        assert response1.status_code in [200, 201], "Missing field request should succeed"
+        
+        if response2.status_code == 200:
+            print(f"      ✅ Null treated as missing (idempotent)")
+        elif response2.status_code in [409, 422]:
+            print(f"      ✅ Null vs missing treated as conflict")
+        else:
+            print(f"      ⚠️  Unexpected status: {response2.status_code}")
+        
+        print(f"🎉 CONFLICT EDGE CASES TEST PASSED!")
+
+    def test_cleanup_idempotency_test_data(self, db_connection):
+        """Очистка данных после тестов идемпотентности"""
+        print("\n🧹 Cleaning up idempotency test data...")
+        
+        cursor = db_connection.cursor()
+        
+        test_emails = [
+            "idempotency-test@example.com",
+            "multiple-idempotency@example.com",
+            "edge-case-1@example.com",
+            "edge-case-2@example.com",
+            "edge-case-3@example.com",
+            "conflict-original@example.com",
+            "conflict-different@example.com",
+            "original@example.com",
+            "modified@example.com",
+            "note-test@example.com",
+            "minimal@example.com",
+            "full@example.com",
+            "similar@example.com",
+            "order@example.com",
+            "null-test@example.com"
+        ]
+        
+        test_sources = [
+            "idempotency_detailed_test",
+            "multiple_idempotency_test",
+            "edge_case_test",
+            "conflict_test",
+            "various_conflicts_test",
+            "edge_conflict_test"
+        ]
+        
+        for email in test_emails:
+            cursor.execute("DELETE FROM leads WHERE email = ?", (email,))
+        
+        for source in test_sources:
+            cursor.execute("DELETE FROM leads WHERE source = ?", (source,))
+        
+        db_connection.commit()
+        print("✅ Idempotency test data cleaned up")
+
     def test_cleanup_idempotency_test_data(self, db_connection):
         """Очистка данных после тестов идемпотентности"""
         print("\n🧹 Cleaning up idempotency test data...")
