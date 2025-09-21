@@ -9,7 +9,7 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from shared.database import engine, LeadDB, InsightDB
-from shared.queue import queue
+from shared.message_queue import queue
 from shared.llm import get_llm_adapter
 
 class TriageWorker:

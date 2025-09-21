@@ -1,25 +1,28 @@
 import json
 import uuid
 from datetime import datetime
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
-
 import sys
 import os
+
 sys.path.append(os.path.join(os.path.dirname(__file__), '../..'))
 
 from shared.database import LeadDB, IdempotencyKeyDB
 from shared.models import LeadRequest, Lead, QueueEvent
-from shared.queue import queue
+from shared.message_queue import queue
 from shared.utils import generate_content_hash
 
 class LeadService:
     def __init__(self, db: Session):
         self.db = db
 
-    async def create_lead(self, lead_request: LeadRequest, idempotency_key: str) -> Lead:
-        """Создает лид с проверкой идемпотентности"""
+    async def create_lead(self, lead_request: LeadRequest, idempotency_key: str) -> tuple[Lead, int]:
+        """
+        Создает лид с проверкой идемпотентности
+        Возвращает: (Lead, status_code)
+        """
         
         print(f"Processing request with idempotency key: {idempotency_key}")
         
@@ -35,8 +38,8 @@ class LeadService:
                 current_request = lead_request.model_dump()
                 
                 if stored_request == current_request:
-                    print("Request matches - returning cached response")
-                    return Lead(**stored_data["lead"])
+                    print("Request matches - returning cached response with 200")
+                    return Lead(**stored_data["lead"]), 200  
                 else:
                     print("Request differs - conflict!")
                     raise HTTPException(status_code=409, detail="Idempotency key conflict")
@@ -90,7 +93,7 @@ class LeadService:
             self.db.commit()
             print(f"Successfully created lead {lead_id}")
             
-            return lead_response
+            return lead_response, 201  
             
         except IntegrityError as e:
             self.db.rollback()
