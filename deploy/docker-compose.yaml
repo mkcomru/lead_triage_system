@@ -1,0 +1,66 @@
+version: '3.8'
+
+services:
+  # Основное приложение
+  lead-triage:
+    build: 
+      context: ..  # Собираем из родительской директории
+      dockerfile: Dockerfile
+    container_name: lead-triage-system
+    ports:
+      - "8000:8000"  # intake-api
+      - "8001:8001"  # insights-api
+    volumes:
+      - ../data:/app/data
+      - ../logs:/app/logs
+    environment:
+      - PYTHONPATH=/app
+      - DATABASE_PATH=/app/data/database.sqlite
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - redis
+    command: >
+      sh -c "
+        echo 'Starting Lead Triage System...' &&
+        python -m pytest -v --tb=short &&
+        echo 'Tests completed. Starting services...' &&
+        python intake-api/main.py &
+        python insights-api/main.py &
+        python triage-worker/main.py &
+        wait
+      "
+
+  # Redis для очередей
+  redis:
+    image: redis:7-alpine
+    container_name: lead-triage-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+
+  # Тесты (отдельный сервис)
+  tests:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: lead-triage-tests
+    volumes:
+      - ../data:/app/data
+      - ../logs:/app/logs
+      - ../test-results:/app/test-results
+    environment:
+      - PYTHONPATH=/app
+      - DATABASE_PATH=/app/data/database.sqlite
+    command: >
+      sh -c "
+        echo 'Running tests...' &&
+        pytest -v --tb=short --junitxml=/app/test-results/results.xml &&
+        echo 'Tests completed!'
+      "
+    profiles:
+      - testing
+
+volumes:
+  redis_data:
